@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-litematic">
+    <comment>Litematica schematic</comment>
+    <icon name="schemview"/>
+    <glob pattern="*.litematic" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-minecraft-schematic">
+    <comment>Minecraft schematic (MCEdit / Schematica / WorldEdit)</comment>
+    <icon name="schemview"/>
+    <glob pattern="*.schematic" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-sponge-schematic">
+    <comment>Sponge / WorldEdit schematic</comment>
+    <icon name="schemview"/>
+    <glob pattern="*.schem" weight="80"/>
+  </mime-type>
+</mime-info>

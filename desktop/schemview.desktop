@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Schematic Viewer
+GenericName=Minecraft Schematic Viewer
+Comment=Look at Litematica / WorldEdit / MCEdit schematics in 3D
+Exec=schemview %f
+TryExec=schemview
+Icon=schemview
+Terminal=false
+Categories=Graphics;3DGraphics;Viewer;
+MimeType=application/x-litematic;application/x-minecraft-schematic;application/x-sponge-schematic;
+StartupWMClass=schemview
+Keywords=minecraft;litematica;schematic;schem;worldedit;
