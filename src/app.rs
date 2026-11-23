@@ -9,10 +9,30 @@ use std::time::Instant;
 
 const BG: Color32 = Color32::from_rgb(0x2a, 0x2c, 0x30);
 
+/// 1234567 -> "1 234 567".
+fn group(n: u64) -> String {
+    let d = n.to_string();
+    let mut out = String::new();
+    for (i, c) in d.chars().enumerate() {
+        if i > 0 && (d.len() - i) % 3 == 0 {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The file info as "label: value" lines, labels padded to one width.
+fn summary_lines(rows: &[(String, String)], indent: &str) -> String {
+    let w = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
+    rows.iter().map(|(k, v)| format!("{indent}{k:<w$}  {v}")).collect::<Vec<_>>().join("\n")
+}
+
 struct Loaded {
     mesh: mesh::Mesh,
     tex: assets::TexData,
-    summary: String,
+    /// File info rows (label, value).
+    summary: Vec<(String, String)>,
     schem: Arc<formats::Schem>,
     bakery: Arc<assets::Bakery>,
 }
@@ -35,29 +55,27 @@ fn load_path(path: &Path) -> Result<Loaded, String> {
     if std::env::var_os("SCHEMVIEW_DEBUG").is_some() {
         eprintln!("translucent quads: {}", m.trans.idx.len() / 6);
     }
-    let mut summary = format!(
-        "{}  ·  {} × {} × {}  ·  {} blocks  ·  {} palette entries  ·  {} triangles",
-        s.format,
-        s.size[0],
-        s.size[1],
-        s.size[2],
-        m.blocks,
-        s.palette.len().saturating_sub(1),
-        tris
-    );
+    let ms = |d: std::time::Duration| format!("{:.0} ms", d.as_secs_f64() * 1e3);
+    let mut summary: Vec<(String, String)> = vec![
+        ("Format".into(), s.format.to_string()),
+        ("Size".into(), format!("{} × {} × {}", s.size[0], s.size[1], s.size[2])),
+        ("Blocks".into(), group(m.blocks)),
+        ("Block states".into(), group(s.palette.len().saturating_sub(1) as u64)),
+        ("Triangles".into(), group(tris as u64)),
+    ];
     if let Some(t) = s.title.as_deref().filter(|t| !t.is_empty()) {
-        summary.push_str(&format!("\n\"{t}\""));
-        if let Some(a) = s.author.as_deref().filter(|a| !a.is_empty()) {
-            summary.push_str(&format!(" by {a}"));
-        }
+        summary.push(("Name".into(), t.to_string()));
     }
-    summary.push_str(&format!(
-        "\nparsed in {:.0} ms, models in {:.0} ms, meshed in {:.0} ms  ·  {}",
-        (t1 - t0).as_secs_f64() * 1e3,
-        (tb - t1).as_secs_f64() * 1e3,
-        (t2 - tb).as_secs_f64() * 1e3,
-        bk.source.as_deref().unwrap_or("no Minecraft install found: flat colours")
+    if let Some(a) = s.author.as_deref().filter(|a| !a.is_empty()) {
+        summary.push(("Author".into(), a.to_string()));
+    }
+    summary.push((
+        "Textures".into(),
+        bk.source.as_deref().map(|t| t.trim_start_matches("textures from ").to_string()).unwrap_or_else(|| "none found: flat colours".into()),
     ));
+    summary.push(("Parsed in".into(), ms(t1 - t0)));
+    summary.push(("Models in".into(), ms(tb - t1)));
+    summary.push(("Meshed in".into(), ms(t2 - tb)));
     let tex = std::mem::replace(&mut bk.tex, assets::TexData { size: 16, layers: Vec::new() });
     Ok(Loaded { mesh: m, tex, summary, schem: Arc::new(s), bakery: Arc::new(bk) })
 }
@@ -221,6 +239,57 @@ fn boxed(painter: &egui::Painter, pos: Pos2, g: Arc<egui::Galley>) {
     painter.galley(pos, g, Color32::WHITE);
 }
 
+/// Lays out a two-column table (dim labels, bright values that wrap at `max_w`). Returns each
+/// galley with its offset from the table's top-left corner, and the table size.
+fn table(painter: &egui::Painter, rows: &[(String, String)], font: &egui::FontId, max_w: f32) -> (Vec<(egui::Vec2, Arc<egui::Galley>)>, egui::Vec2) {
+    let labels: Vec<_> = rows.iter().map(|(k, _)| painter.layout_no_wrap(k.clone(), font.clone(), Color32::from_gray(165))).collect();
+    let col = labels.iter().map(|g| g.size().x).fold(0.0, f32::max) + 12.0;
+    let (mut out, mut y, mut w) = (Vec::new(), 0.0f32, 0.0f32);
+    for ((_, v), lg) in rows.iter().zip(labels) {
+        let vg = painter.layout(v.clone(), font.clone(), Color32::from_gray(225), (max_w - col).max(80.0));
+        let h = lg.size().y.max(vg.size().y);
+        w = w.max(col + vg.size().x);
+        out.push((egui::vec2(0.0, y), lg));
+        out.push((egui::vec2(col, y), vg));
+        y += h + 1.0;
+    }
+    (out, egui::vec2(w, (y - 1.0).max(0.0)))
+}
+
+/// An outlined button, green while `on`. With `hotkey` the first letter sits in its own cell,
+/// like a keycap: [I|NFO]. A faint dark fill keeps it readable over a bright build.
+fn key_button(ui: &mut egui::Ui, text: &str, hotkey: bool, on: bool) -> egui::Response {
+    let touch = platform::TOUCH;
+    let font = egui::FontId::proportional(if touch { 16.0 } else { 13.0 });
+    let (px, py) = if touch { (12.0, 9.0) } else { (7.0, 4.0) };
+    let text = text.to_uppercase();
+    let split = if hotkey { text.chars().next().map(char::len_utf8).unwrap_or(0) } else { 0 };
+    let (key, rest) = text.split_at(split);
+    let p = ui.painter();
+    let kg = (!key.is_empty()).then(|| p.layout_no_wrap(key.to_string(), font.clone(), Color32::PLACEHOLDER));
+    let rg = p.layout_no_wrap(rest.to_string(), font, Color32::PLACEHOLDER);
+    let kw = kg.as_ref().map(|g| g.size().x + 2.0 * px).unwrap_or(0.0);
+    let h = rg.size().y + 2.0 * py;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(kw + rg.size().x + 2.0 * px, h), egui::Sense::click());
+    let col = if on {
+        BAR_ACCENT
+    } else if resp.hovered() {
+        Color32::from_gray(225)
+    } else {
+        Color32::from_gray(165)
+    };
+    let p = ui.painter();
+    p.rect_filled(rect, 3.0, PANEL);
+    p.rect_stroke(rect, 3.0, egui::Stroke::new(1.5, col), egui::StrokeKind::Inside);
+    if let Some(kg) = kg {
+        p.galley(Pos2::new(rect.left() + px, rect.top() + py), kg, col);
+        let x = rect.left() + kw;
+        p.line_segment([Pos2::new(x, rect.top() + 1.0), Pos2::new(x, rect.bottom() - 1.0)], egui::Stroke::new(1.5, col));
+    }
+    p.galley(Pos2::new(rect.left() + kw + px, rect.top() + py), rg, col);
+    resp
+}
+
 const BAR_ACCENT: Color32 = Color32::from_rgb(0x76, 0xB2, 0x60);
 
 // ---------------------------------------------------------------- app
@@ -230,7 +299,7 @@ struct App {
     rx: Option<mpsc::Receiver<Result<Loaded, String>>>,
     loading_since: Option<Instant>,
     error: Option<String>,
-    summary: String,
+    summary: Vec<(String, String)>,
     renderer: Option<Arc<Mutex<render::Renderer>>>,
     has_mesh: bool,
     bounds: ([f32; 3], [f32; 3]),
@@ -283,6 +352,7 @@ impl App {
             }) {
                 Ok(r) => Some(Arc::new(Mutex::new(r))),
                 Err(e) => {
+                    eprintln!("OpenGL setup failed: {e}");
                     error = Some(format!("OpenGL setup failed: {e}"));
                     None
                 }
@@ -302,7 +372,7 @@ impl App {
             rx: None,
             loading_since: None,
             error,
-            summary: String::new(),
+            summary: Vec::new(),
             renderer,
             has_mesh: false,
             bounds: ([0.0; 3], [1.0; 3]),
@@ -357,7 +427,10 @@ impl App {
         self.path = Some(p);
         self.rx = Some(rx);
         self.loading_since = Some(Instant::now());
-        self.error = None;
+        // Without a renderer nothing can be drawn: keep that error on screen instead of a blank view.
+        if self.renderer.is_some() {
+            self.error = None;
+        }
     }
 
     fn fit(&mut self, aspect: f32) {
@@ -609,15 +682,21 @@ impl App {
                 egui::Frame::popup(ui.style()).fill(Color32::from_rgb(28, 29, 33)).inner_margin(18.0).show(ui, |ui| {
                     ui.set_width(width - 36.0);
                     ui.label(RichText::new("Controls").size(19.0).strong());
-                    for (k, v) in [
-                        ("One finger", "orbit"),
-                        ("Two fingers", "pinch to zoom, drag to pan"),
-                        ("Double-tap", "reset the view"),
-                        ("Layer bar", "drag the top or bottom handle to cut the build open; drag between them to move both; double-tap the bar to show all layers"),
-                    ] {
-                        ui.label(RichText::new(k).strong().color(Color32::from_gray(235)));
-                        ui.label(RichText::new(v).color(Color32::from_gray(185)));
-                    }
+                    // Text rows, not tap targets: drop the tall minimum row height of the touch style.
+                    ui.spacing_mut().interact_size.y = 0.0;
+                    egui::Grid::new("help-grid").num_columns(2).spacing(egui::vec2(14.0, 8.0)).show(ui, |ui| {
+                        for (k, v) in [
+                            ("One finger", "orbit"),
+                            ("Two fingers", "pinch to zoom, drag to pan"),
+                            ("Double-tap", "reset the view"),
+                            ("Layer bar", "drag the top or bottom handle to cut the build open; drag between them to move both"),
+                            ("Double-tap bar", "show all layers"),
+                        ] {
+                            ui.label(RichText::new(k).color(Color32::from_gray(165)));
+                            ui.add(egui::Label::new(RichText::new(v).color(Color32::from_gray(225))).wrap());
+                            ui.end_row();
+                        }
+                    });
                     ui.label(RichText::new("Files can also be opened from a file manager or chat app with \"Open with\" or \"Share\".").color(Color32::from_gray(185)));
                     ui.separator();
                     self.texture_section(ui, true);
@@ -634,13 +713,14 @@ impl App {
         if self.has_mesh || self.path.is_some() {
             egui::Area::new("buttons".into()).pivot(Align2::LEFT_BOTTOM).fixed_pos(Pos2::new(safe.left() + 10.0, safe.bottom() - 10.0)).show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Open").clicked() {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if key_button(ui, "Open", false, false).clicked() {
                         platform::pick_file();
                     }
-                    if ui.selectable_label(self.show_info, "Info").clicked() {
+                    if key_button(ui, "Info", false, self.show_info).clicked() {
                         self.show_info = !self.show_info;
                     }
-                    if ui.selectable_label(self.show_help, "Help").clicked() {
+                    if key_button(ui, "Help", false, self.show_help).clicked() {
                         self.show_help = !self.show_help;
                     }
                 });
@@ -730,7 +810,9 @@ impl eframe::App for App {
                 platform::Msg::Status(t, sticky) => self.status = t.map(|t| (t, sticky, Instant::now())),
                 platform::Msg::TexturesChanged => {
                     self.tex_source = tex_source();
-                    if let (Some(p), None) = (self.path.clone(), &self.rx) {
+                    // Also while a load runs: open() replaces its channel, so the stale result
+                    // (made without the new textures) is dropped.
+                    if let Some(p) = self.path.clone() {
                         self.open(&ctx, p);
                     }
                 }
@@ -778,7 +860,7 @@ impl eframe::App for App {
                                     }
                                 }
                                 self.layers = Some(ly);
-                                platform::log(&format!("loaded: {}", l.summary.replace('\n', " | ")));
+                                platform::log(&format!("loaded: {}", l.summary.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ")));
                                 self.summary = l.summary;
                                 self.shown_path = self.path.clone();
                                 self.has_mesh = true;
@@ -983,7 +1065,6 @@ impl eframe::App for App {
         let touch = platform::TOUCH;
         let painter = ui.painter();
         let font = egui::FontId::proportional(if touch { 14.0 } else { 13.0 });
-        let dim = Color32::from_gray(170);
         let name = self
             .path
             .as_ref()
@@ -993,17 +1074,19 @@ impl eframe::App for App {
         let text_w = (safe.width() - if touch { 110.0 } else { 100.0 }).max(100.0);
         let origin = Pos2::new(safe.left() + 10.0, safe.top() + 8.0);
         let show_name = !touch || self.path.is_some();
-        let g = painter.layout(name, egui::FontId::proportional(if touch { 17.0 } else { 15.0 }), Color32::from_gray(235), text_w);
-        let mut block = egui::Rect::from_min_size(origin, g.size());
-        let mut parts = vec![(origin, g)];
-        if self.has_mesh && self.loading_since.is_none() {
-            let pos = Pos2::new(origin.x, block.bottom() + 2.0);
-            let g = painter.layout(self.summary.clone(), font.clone(), dim, text_w);
-            block = block.union(egui::Rect::from_min_size(pos, g.size()));
-            parts.push((pos, g));
-        }
         if show_name && (self.show_info || self.loading_since.is_some()) {
-            painter.rect_filled(block.expand2(egui::vec2(6.0, 4.0)), 4.0, PANEL);
+            // File name, then a two-column table: dim labels, bright values (long values wrap).
+            let info_w = text_w.min(if touch { 300.0 } else { 280.0 });
+            let g = painter.layout(name, egui::FontId::proportional(if touch { 17.0 } else { 15.0 }), Color32::from_gray(235), info_w);
+            let mut block = egui::Rect::from_min_size(origin, g.size());
+            let mut parts = vec![(origin, g)];
+            if self.has_mesh && self.loading_since.is_none() {
+                let top = Pos2::new(origin.x, block.bottom() + 6.0);
+                let (cells, size) = table(painter, &self.summary, &font, info_w);
+                block = block.union(egui::Rect::from_min_size(top, size));
+                parts.extend(cells.into_iter().map(|(o, g)| (top + o, g)));
+            }
+            painter.rect_filled(block.expand2(egui::vec2(8.0, 6.0)), 4.0, PANEL);
             for (pos, g) in parts {
                 painter.galley(pos, g, Color32::WHITE);
             }
@@ -1031,14 +1114,45 @@ impl eframe::App for App {
             self.touch_controls(&ctx, safe);
             return;
         }
-        let hint = if self.show_help {
-            "Left-drag: orbit   ·   Scroll / pinch / + −: zoom   ·   Right/middle or Shift+drag: pan\nArrows: orbit   ·   R / double-click: reset view   ·   I: file info on/off   ·   drop a file to open it   ·   Q / Esc: quit   ·   H: hide help\nLayer bar (right): drag the top / bottom handle, drag between them to move both, scroll on it, double-click: all layers\nPage Up / Down: top layer   ·   Shift + Page Up / Down: bottom layer"
-        } else {
-            "H: help"
-        };
-        let g = painter.layout(hint.to_string(), font, Color32::from_gray(140), text_w);
-        let pos = Pos2::new(rect.left() + 10.0, rect.bottom() - 8.0 - g.size().y);
-        boxed(painter, pos, g);
+        // Bottom-left toggles, like the buttons on Android; the keys I and H do the same.
+        let bar = egui::Area::new("buttons".into()).pivot(egui::Align2::LEFT_BOTTOM).fixed_pos(Pos2::new(safe.left() + 10.0, safe.bottom() - 10.0)).show(&ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if self.has_mesh && key_button(ui, "Info", true, self.show_info).clicked() {
+                    self.show_info = !self.show_info;
+                }
+                if key_button(ui, "Help", true, self.show_help).clicked() {
+                    self.show_help = !self.show_help;
+                }
+            });
+        });
+        if self.show_help {
+            let rows: Vec<(String, String)> = [
+                ("Left-drag", "orbit"),
+                ("Arrow keys", "orbit"),
+                ("Scroll, pinch, + −", "zoom"),
+                ("Right/middle-drag", "pan"),
+                ("Shift + drag", "pan"),
+                ("R, double-click", "reset the view"),
+                ("I", "file info on/off"),
+                ("H", "this help on/off"),
+                ("Drop a file", "open it"),
+                ("Q, Esc", "quit"),
+                ("Layer bar", "drag the top or bottom handle; drag between them to move both; scroll on it"),
+                ("Double-click bar", "show all layers"),
+                ("Page Up / Down", "move the top layer"),
+                ("Shift + Page Up / Down", "move the bottom layer"),
+            ]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+            let (cells, size) = table(painter, &rows, &font, text_w.min(420.0));
+            let top = Pos2::new(safe.left() + 10.0, bar.response.rect.top() - 12.0 - size.y);
+            painter.rect_filled(egui::Rect::from_min_size(top, size).expand2(egui::vec2(8.0, 6.0)), 4.0, PANEL);
+            for (o, g) in cells {
+                painter.galley(top + o, g, Color32::WHITE);
+            }
+        }
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -1135,7 +1249,8 @@ fn path_from_arg(a: &str) -> PathBuf {
         let mut i = 0;
         while i < b.len() {
             if b[i] == b'%' && i + 2 < b.len() {
-                if let Ok(v) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
+                // Bytes, not a str slice: a multi-byte character after '%' must not panic.
+                if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
                     out.push(v);
                     i += 3;
                     continue;
@@ -1144,6 +1259,9 @@ fn path_from_arg(a: &str) -> PathBuf {
             out.push(b[i]);
             i += 1;
         }
+        #[cfg(unix)]
+        return PathBuf::from(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&out));
+        #[cfg(not(unix))]
         return PathBuf::from(String::from_utf8_lossy(&out).into_owned());
     }
     PathBuf::from(a)
@@ -1183,7 +1301,7 @@ fn run_stats(files: &[String]) -> i32 {
     for f in files {
         let p = path_from_arg(f);
         match load_guarded(&p) {
-            Ok(l) => println!("OK   {}\n     {}", p.display(), l.summary.replace('\n', "\n     ")),
+            Ok(l) => println!("OK   {}\n{}", p.display(), summary_lines(&l.summary, "     ")),
             Err(e) => {
                 println!("FAIL {}\n     {e}", p.display());
                 rc = 1;

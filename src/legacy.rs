@@ -8,6 +8,11 @@ pub const COLORS: [&str; 16] = [
 ];
 const WOODS: [&str; 6] = ["oak", "spruce", "birch", "jungle", "acacia", "dark_oak"];
 const DIR6: [&str; 6] = ["down", "up", "north", "south", "west", "east"];
+/// BlockRailBase.EnumRailDirection metadata order.
+const RAIL: [&str; 10] = [
+    "north_south", "east_west", "ascending_east", "ascending_west", "ascending_north", "ascending_south", "south_east", "south_west",
+    "north_west", "north_east",
+];
 /// EnumFacing.getHorizontal order.
 const HORIZ: [&str; 4] = ["south", "west", "north", "east"];
 
@@ -239,7 +244,21 @@ pub fn legacy_state(id: u16, data: u8, lower_data: u8) -> BlockState {
             name,
             &[("facing", HORIZ[(d & 3) as usize]), ("part", if d & 8 != 0 { "head" } else { "foot" })],
         ),
-        155 => bs(if d == 2 || d == 3 || d == 4 { "quartz_pillar" } else { "quartz_block" }, &[]),
+        155 => match d {
+            1 => bs("chiseled_quartz_block", &[]),
+            2..=4 => bs("quartz_pillar", &[("axis", ["y", "x", "z"][(d - 2) as usize])]),
+            _ => bs("quartz_block", &[]),
+        },
+        170 | 202 | 216 => bs(name, &[("axis", ["y", "x", "z", "y"][((d >> 2) & 3) as usize])]),
+        66 => bs(name, &[("shape", RAIL.get(d as usize).copied().unwrap_or("north_south"))]),
+        27 | 28 | 157 => bs(
+            name,
+            &[("shape", RAIL.get((d & 7) as usize).copied().unwrap_or("north_south")), ("powered", if d & 8 != 0 { "true" } else { "false" })],
+        ),
+        145 => bs(["anvil", "chipped_anvil", "damaged_anvil", "anvil"][((d >> 2) & 3) as usize], &[("facing", HORIZ[(d & 3) as usize])]),
+        86 => bs("carved_pumpkin", &[("facing", HORIZ[(d & 3) as usize])]),
+        91 => bs(name, &[("facing", HORIZ[(d & 3) as usize])]),
+        120 => bs(name, &[("facing", HORIZ[(d & 3) as usize]), ("eye", if d & 4 != 0 { "true" } else { "false" })]),
         8 | 9 => bs("water", &[("level", &d.to_string())]),
         10 | 11 => bs("lava", &[("level", &d.to_string())]),
         _ if is_stairs(id) => bs(

@@ -80,21 +80,36 @@ impl Tag {
     }
 }
 
+/// Largest decompressed file accepted. A compression bomb would otherwise run the process out of
+/// memory, which aborts instead of returning an error. Real schematics stay far below this.
+const MAX_INFLATED: u64 = if cfg!(target_os = "android") { 1 << 30 } else { 3 << 30 };
+
+fn too_big(out: &[u8]) -> Result<(), String> {
+    if out.len() as u64 > MAX_INFLATED {
+        return Err(format!("file unpacks to more than {} GB, too large", MAX_INFLATED >> 30));
+    }
+    Ok(())
+}
+
 /// Decompress (gzip / zlib / raw) and parse the root compound.
 pub fn read_file(data: &[u8]) -> Result<Tag, String> {
     let raw: Vec<u8>;
     let bytes: &[u8] = if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
         let mut out = Vec::with_capacity(data.len() * 8);
         flate2::read::MultiGzDecoder::new(data)
+            .take(MAX_INFLATED + 1)
             .read_to_end(&mut out)
             .map_err(|e| format!("gzip decompression failed: {e}"))?;
+        too_big(&out)?;
         raw = out;
         &raw
     } else if data.len() >= 2 && data[0] == 0x78 && (u16::from(data[0]) << 8 | u16::from(data[1])) % 31 == 0 {
         let mut out = Vec::with_capacity(data.len() * 8);
         flate2::read::ZlibDecoder::new(data)
+            .take(MAX_INFLATED + 1)
             .read_to_end(&mut out)
             .map_err(|e| format!("zlib decompression failed: {e}"))?;
+        too_big(&out)?;
         raw = out;
         &raw
     } else {

@@ -54,6 +54,10 @@ gaps; stained glass, slime, honey, ice and water are blended and sorted back to
 front. Old MCEdit files with numeric block IDs are converted to modern blocks
 first, so they get textures too.
 
+Zoomed in, the texture pixels keep hard, crisp colours, but their edges are
+anti-aliased over one screen pixel, so diagonal pixel lines don't look jagged.
+Zoomed out, textures use Minecraft's own mipmap filtering.
+
 | | |
 |---|---|
 | ![Bluebell Mushroom](docs/mushroom.png) | ![Japanese temple](docs/temple.png) |
@@ -77,8 +81,8 @@ The file type is detected from the content, not the extension.
 | Right or middle drag, Shift + left drag | pan |
 | Arrow keys | orbit |
 | `R`, `Home`, double-click | reset the view |
-| `I` | show or hide the file info |
-| `H` | help |
+| `I`, or the Info button (bottom left) | show or hide the file info |
+| `H`, or the Help button | show or hide the controls |
 | `Q`, `Esc` | quit |
 
 Drop another file on the window to open it. The camera is orthographic, and
@@ -172,6 +176,7 @@ Environment variables, mostly for testing and screenshots:
 | `SCHEMVIEW_VIEW=yaw,pitch` | start at this angle, in degrees |
 | `SCHEMVIEW_ZOOM=f` | start zoomed in by factor f |
 | `SCHEMVIEW_MAXIMIZED=1` | open maximized |
+| `SCHEMVIEW_NO_SMOOTH=1` | hard texel edges instead of anti-aliased ones |
 | `SCHEMVIEW_DEBUG=1` | print GL info and timings |
 | `SCHEMVIEW_SELFTEST=1` | drive the camera and layer bar with fake input, then quit |
 
@@ -182,7 +187,7 @@ Environment variables, mostly for testing and screenshots:
   with their texture. Banners, mob heads and conduits are plain coloured shapes.
 - Entities (item frames, armor stands, mobs) aren't shown.
 - The Android app needs a phone with OpenGL ES 3.0 (practically every 64-bit phone has it)
-  and keeps the whole build in graphics memory: about 1 GB for 7 million
+  and keeps the whole build in graphics memory: about 1.1 GB for 7 million
   triangles.
 - Animated textures show their first frame. Tints use Minecraft's default
   colours, not the biome's.

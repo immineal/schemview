@@ -73,6 +73,9 @@ pub struct Renderer {
     u_cut: Option<glow::UniformLocation>,
     u_a2c: Option<glow::UniformLocation>,
     u_texsize: Option<glow::UniformLocation>,
+    u_smooth: Option<glow::UniformLocation>,
+    /// Anti-aliased texel edges (SCHEMVIEW_NO_SMOOTH=1 turns it off).
+    smooth: bool,
     tex_size: f32,
     /// MSAA samples of the window framebuffer (None = not queried yet).
     samples: Option<i32>,
@@ -97,13 +100,21 @@ in vec2 a_uv;
 in float a_layer;
 in vec4 a_col;
 in float a_y;
+in vec4 a_rect;
 uniform mat4 u_mvp;
 uniform vec2 u_range;
 out vec4 v_col;
 out vec3 v_uv;
+// Centroid copy for sampling: MSAA edge pixels whose centre lies outside the face must not sample past
+// its UV rect (the neighbouring texel can be transparent, e.g. above a torch head: a light seam).
+// Gradients still come from v_uv, since centroid derivatives are unreliable at edges.
+centroid out vec2 v_uvc;
+flat out vec4 v_rect;
 void main() {
     v_col = a_col;
     v_uv = vec3(a_uv, a_layer);
+    v_uvc = a_uv;
+    v_rect = vec4(a_rect.xy, 256.0 - a_rect.zw) / 256.0;
     // Layer cut: bits 0-13 = block layer, bit 14 = only at the lowest shown layer, bit 15 = only at the highest.
     float y = mod(a_y, 16384.0);
     float flag = floor(a_y / 16384.0);
@@ -119,11 +130,27 @@ uniform sampler2DArray u_tex;
 uniform float u_cut;
 uniform float u_a2c;
 uniform float u_texsize;
+uniform float u_smooth;
 in vec4 v_col;
 in vec3 v_uv;
+centroid in vec2 v_uvc;
+flat in vec4 v_rect;
 out vec4 o_col;
 void main() {
-    vec4 t = texture(u_tex, v_uv);
+    vec2 gx = dFdx(v_uv.xy), gy = dFdy(v_uv.xy);
+    vec2 px = v_uvc * u_texsize;
+    if (u_smooth > 0.5) {
+        // Sharp texel edges without jaggies: magnified texels stay solid and only blend across the
+        // one screen pixel at a texel boundary (the texture's linear mag filter does the blend). At
+        // 1 texel per pixel or less this changes nothing, and minified textures keep their mip filter.
+        vec2 fw = (abs(gx) + abs(gy)) * u_texsize;
+        vec2 seam = floor(px + 0.5);
+        px = seam + clamp((px - seam) / clamp(fw, 1e-4, 1.0), -0.5, 0.5);
+    }
+    // Never blend in texels outside this face's UV rect (they can be transparent or another colour).
+    vec2 lo = v_rect.xy * u_texsize + 0.5, hi = v_rect.zw * u_texsize - 0.5, m = 0.5 * (lo + hi);
+    px = clamp(px, min(lo, m), max(hi, m));
+    vec4 t = textureGrad(u_tex, vec3(px / u_texsize, v_uv.z), gx, gy);
     vec4 c = t * v_col;
     if (u_cut < 0.1) {
         // Translucent pass: plain blending.
@@ -133,14 +160,16 @@ void main() {
     }
     // Cutout pass (leaves, glass, plants). Mipmapping thins out the alpha of distant cutout
     // textures; scale it back up by the mip level so leaves keep their coverage.
-    vec2 px = v_uv.xy * u_texsize;
-    vec2 dx = dFdx(px), dy = dFdy(px);
+    vec2 dx = gx * u_texsize, dy = gy * u_texsize;
     float lod = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
     float a = t.a * (1.0 + lod * 0.25);
     if (u_a2c > 0.5) {
         // With MSAA: a sharp but anti-aliased edge via alpha-to-coverage instead of a hard
         // threshold, so cutout edges don't sparkle while the view moves.
-        a = (a - u_cut) / max(fwidth(a), 0.0001) + 0.5;
+        // Fully opaque texels always cover: at a face edge fwidth(a) also sees neighbour pixels
+        // that fell off the face onto transparent texels, which left seam dots (torch heads).
+        float fw = fwidth(a); // outside the ?: so the derivative is taken in uniform control flow
+        a = t.a >= 0.999 ? 1.0 : (a - u_cut) / max(fw, 0.0001) + 0.5;
         if (a <= 0.0) discard;
         o_col = vec4(c.rgb, clamp(a, 0.0, 1.0));
     } else {
@@ -171,6 +200,7 @@ impl Renderer {
             gl.bind_attrib_location(program, 2, "a_layer");
             gl.bind_attrib_location(program, 3, "a_col");
             gl.bind_attrib_location(program, 4, "a_y");
+            gl.bind_attrib_location(program, 5, "a_rect");
             gl.link_program(program);
             if !gl.get_program_link_status(program) {
                 return Err(format!("shader link failed: {}", gl.get_program_info_log(program)));
@@ -183,6 +213,7 @@ impl Renderer {
             let u_cut = gl.get_uniform_location(program, "u_cut");
             let u_a2c = gl.get_uniform_location(program, "u_a2c");
             let u_texsize = gl.get_uniform_location(program, "u_texsize");
+            let u_smooth = gl.get_uniform_location(program, "u_smooth");
             let u_tex = gl.get_uniform_location(program, "u_tex");
             let u_range = gl.get_uniform_location(program, "u_range");
             if std::env::var_os("SCHEMVIEW_DEBUG").is_some() {
@@ -198,6 +229,8 @@ impl Renderer {
                 u_cut,
                 u_a2c,
                 u_texsize,
+                u_smooth,
+                smooth: std::env::var_os("SCHEMVIEW_NO_SMOOTH").is_none(),
                 tex_size: 16.0,
                 samples: None,
                 u_tex,
@@ -234,6 +267,8 @@ impl Renderer {
         gl.vertex_attrib_pointer_f32(3, 4, glow::UNSIGNED_BYTE, true, stride, 20);
         gl.enable_vertex_attrib_array(4);
         gl.vertex_attrib_pointer_f32(4, 1, glow::UNSIGNED_SHORT, false, stride, 18);
+        gl.enable_vertex_attrib_array(5);
+        gl.vertex_attrib_pointer_f32(5, 4, glow::UNSIGNED_BYTE, false, stride, 24);
         let ibo = gl.create_buffer()?;
         gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ibo));
         let ibytes = std::slice::from_raw_parts(p.idx.as_ptr() as *const u8, std::mem::size_of_val(p.idx.as_slice()));
@@ -278,7 +313,7 @@ impl Renderer {
         gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAX_LEVEL, levels);
         gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
         gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MIN_FILTER, glow::NEAREST_MIPMAP_LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAG_FILTER, if self.smooth { glow::LINEAR } else { glow::NEAREST } as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
         gl.bind_texture(glow::TEXTURE_2D_ARRAY, None);
@@ -423,6 +458,7 @@ impl Renderer {
             gl.uniform_1_f32(self.u_cut.as_ref(), 0.5);
             gl.uniform_1_f32(self.u_a2c.as_ref(), if a2c { 1.0 } else { 0.0 });
             gl.uniform_1_f32(self.u_texsize.as_ref(), self.tex_size);
+            gl.uniform_1_f32(self.u_smooth.as_ref(), if self.smooth { 1.0 } else { 0.0 });
             gl.uniform_2_f32(self.u_range.as_ref(), range[0], range[1]);
             if a2c {
                 gl.enable(glow::SAMPLE_ALPHA_TO_COVERAGE);

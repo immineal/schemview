@@ -14,6 +14,9 @@ pub struct Vert {
     /// CAP_UP = only drawn when it is the highest shown. The vertex shader hides layers outside the range.
     pub y: u16,
     pub col: [u8; 4],
+    /// The face's UV rect in 1/256 of the texture (min u, min v, 256 - max u, 256 - max v), rounded
+    /// inwards, so texture smoothing never reaches past it. Model UVs sit on that grid.
+    pub rect: [u8; 4],
 }
 
 #[derive(Default)]
@@ -282,15 +285,27 @@ fn emit(c: &Ctx, part: &mut Part, cell: [i64; 3], q: &Quad, nz: f32, alpha: u8, 
         }
     }
     let base = part.verts.len() as u32;
+    // Quantize UVs towards the middle of the face's UV rect: plain truncation can move an edge
+    // a hair into the neighbouring (maybe transparent) texel, e.g. 6/16 -> texel 5.99994.
+    let mid = [0, 1].map(|a| q.uv.iter().map(|u| u[a]).sum::<f32>() * 0.25);
+    let unorm = |u: f32, m: f32| -> u16 {
+        let x = u * 65535.0;
+        (if u < m - 1e-6 { x.ceil() } else if u > m + 1e-6 { x.floor() } else { x.round() }).clamp(0.0, 65535.0) as u16
+    };
+    let lo = [0, 1].map(|a| q.uv.iter().map(|u| u[a]).fold(f32::MAX, f32::min));
+    let hi = [0, 1].map(|a| q.uv.iter().map(|u| u[a]).fold(f32::MIN, f32::max));
+    let in256 = |d: f32| (d * 256.0 - 1e-3).ceil().clamp(0.0, 255.0) as u8;
+    let rect = [in256(lo[0]), in256(lo[1]), in256(1.0 - hi[0]), in256(1.0 - hi[1])];
     for k in 0..4 {
         let l = q.shade * AO[ao[k] as usize] * nz;
         let cl = |x: u8| (x as f32 * l).clamp(0.0, 255.0) as u8;
         part.verts.push(Vert {
             pos: [cell[0] as f32 + q.pos[k][0], cell[1] as f32 + q.pos[k][1], cell[2] as f32 + q.pos[k][2]],
-            uv: [(q.uv[k][0] * 65535.0) as u16, (q.uv[k][1] * 65535.0) as u16],
+            uv: [unorm(q.uv[k][0], mid[0]), unorm(q.uv[k][1], mid[1])],
             layer: q.tex,
             y: tag,
             col: [cl(q.color[0]), cl(q.color[1]), cl(q.color[2]), alpha],
+            rect,
         });
     }
     let flip = (ao[0] as u32 + ao[2] as u32) < (ao[1] as u32 + ao[3] as u32);

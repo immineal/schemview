@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "schemview"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "eframe",
  "flate2",
@@ -1986,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "schemview-android"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "android_logger",
  "jni 0.21.1",

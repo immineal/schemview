@@ -254,8 +254,43 @@ impl TexStore {
             }
             let opaque = img.rgba.chunks_exact(4).all(|c| c[3] == 255);
             if !opaque {
-                // Give fully transparent pixels the average colour of the visible ones, so mipmaps of
-                // cutout textures (leaves, plants) don't bleed white/black into the distance.
+                // Fully transparent pixels take the colour of their visible neighbours (a few rings
+                // out), the rest the average visible colour. Mipmaps and the smoothed texel edges of
+                // cutout textures (leaves, plants) then don't bleed white/black or a foreign colour.
+                let (w, h) = (img.w as i64, img.h as i64);
+                let mut filled: Vec<bool> = img.rgba.chunks_exact(4).map(|c| c[3] > 0).collect();
+                for _ in 0..3 {
+                    let mut next = filled.clone();
+                    let mut rgba = img.rgba.clone();
+                    for y in 0..h {
+                        for x in 0..w {
+                            let i = (y * w + x) as usize;
+                            if filled[i] {
+                                continue;
+                            }
+                            let (mut sum, mut n) = ([0u32; 3], 0u32);
+                            for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                                let (nx, ny) = (x + dx, y + dy);
+                                if nx < 0 || ny < 0 || nx >= w || ny >= h || !filled[(ny * w + nx) as usize] {
+                                    continue;
+                                }
+                                let j = (ny * w + nx) as usize * 4;
+                                for k in 0..3 {
+                                    sum[k] += img.rgba[j + k] as u32;
+                                }
+                                n += 1;
+                            }
+                            if n > 0 {
+                                for k in 0..3 {
+                                    rgba[i * 4 + k] = (sum[k] / n) as u8;
+                                }
+                                next[i] = true;
+                            }
+                        }
+                    }
+                    img.rgba = rgba;
+                    filled = next;
+                }
                 let (mut sum, mut n) = ([0u64; 3], 0u64);
                 for c in img.rgba.chunks_exact(4).filter(|c| c[3] > 0) {
                     for k in 0..3 {
@@ -265,8 +300,10 @@ impl TexStore {
                 }
                 if n > 0 {
                     let avg = sum.map(|v| (v / n) as u8);
-                    for c in img.rgba.chunks_exact_mut(4).filter(|c| c[3] == 0) {
-                        c[..3].copy_from_slice(&avg);
+                    for (c, f) in img.rgba.chunks_exact_mut(4).zip(&filled) {
+                        if !f {
+                            c[..3].copy_from_slice(&avg);
+                        }
                     }
                 }
             }
@@ -697,8 +734,11 @@ impl Ctx {
                 for cond in k.split(',').filter(|c| !c.is_empty()) {
                     let Some((pk, pv)) = cond.split_once('=') else { continue };
                     match st.prop(pk) {
-                        Some(x) if x == pv => score += 1,
-                        Some(_) => score -= 4,
+                        Some(x) if x == pv => score += 10,
+                        Some(_) => score -= 40,
+                        // Property missing (old or hand-made files): lean to the usual default
+                        // instead of the alphabetically first variant (axis=x, ascending_east...).
+                        None if DEFAULT_VALUES.contains(&pv) => score += 1,
                         None => {}
                     }
                 }
@@ -891,6 +931,9 @@ fn hash(s: &str) -> u32 {
 }
 
 /// Bake every palette entry. Uses the Minecraft jar when available, flat colours otherwise.
+/// Property values that are Minecraft's default state for most blocks.
+const DEFAULT_VALUES: [&str; 13] = ["y", "north_south", "north", "false", "bottom", "lower", "floor", "none", "straight", "0", "left", "foot", "single"];
+
 pub fn bake_palette(palette: &[BlockState]) -> Bakery {
     let jar_path = if std::env::var_os("SCHEMVIEW_FLAT").is_some() { None } else { find_jar() };
     let mut ctx = jar_path.as_deref().and_then(Jar::open).map(|jar| Ctx {
