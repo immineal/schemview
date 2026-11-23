@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.immineal.schemview">
+
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <!-- Only for the optional texture download from Mojang. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="schemview"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Schemview"
+        android:hasCode="true"
+        android:allowBackup="false"
+        android:extractNativeLibs="false"
+        android:resizeableActivity="true"
+        android:enableOnBackInvokedCallback="true">
+
+        <!-- singleTask: "Open with" reaches the running viewer (onNewIntent) instead of starting a
+             second one; one native event loop per process. configChanges: rotating, folding or
+             resizing never recreates the activity, the viewer just gets a new window size. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboard|keyboardHidden|navigation|uiMode|fontScale|fontWeightAdjustment|locale|layoutDirection|colorMode|touchscreen|mcc|mnc|grammaticalGender"
+            android:windowSoftInputMode="stateAlwaysHidden">
+            <meta-data android:name="android.app.lib_name" android:value="schemview_android" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Schematics have no registered MIME type; file managers and chat apps send them as
+                 octet-stream (or gzip, which .litematic and .schem are inside). One filter per type,
+                 with BROWSABLE: some file managers (FX) only list apps whose filters look like this. -->
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/gzip" />
+            </intent-filter>
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/x-gzip" />
+            </intent-filter>
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/x-litematic" />
+            </intent-filter>
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/x-schematic" />
+            </intent-filter>
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/x-nbt" />
+            </intent-filter>
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter android:label="schemview">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/gzip" />
+                <data android:mimeType="application/x-gzip" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

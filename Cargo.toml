@@ -1,6 +1,6 @@
 [package]
 name = "schemview"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "Fast native viewer for Minecraft .litematic, .schematic, .schem and structure .nbt files"
 authors = ["Linus Linhof"]
@@ -12,11 +12,21 @@ categories = ["graphics", "rendering", "visualization"]
 exclude = ["docs/*.gif"]
 
 [dependencies]
-eframe = { version = "=0.36.2", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }
+eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts"] }
 flate2 = "1.1"
 zip = { version = "=0.6.6", default-features = false, features = ["deflate"] }
 png = "0.18"
 serde_json = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["wayland", "x11"] }
+
+# The Android build (android/build.sh) links this library into android/native.
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["android-native-activity"] }
+winit = { version = "=0.30.13", default-features = false, features = ["android-native-activity"] }
+jni = "0.21"
+log = "0.4"
 
 [profile.release]
 opt-level = 3

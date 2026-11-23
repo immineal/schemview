@@ -113,8 +113,8 @@ void main() {
 }
 "#;
 const FS: &str = r#"
-precision mediump float;
-precision mediump sampler2DArray;
+precision highp float;
+precision highp sampler2DArray;
 uniform sampler2DArray u_tex;
 uniform float u_cut;
 uniform float u_a2c;

@@ -1,6 +1,6 @@
 # schemview
 
-A small desktop viewer for Minecraft schematics. Double-click a `.litematic`,
+A small viewer for Minecraft schematics, for the desktop and Android. Double-click a `.litematic`,
 `.schematic` or `.schem` file and it opens in 3D with the real block textures.
 You can orbit, zoom, and peel the build apart layer by layer.
 
@@ -106,6 +106,36 @@ untested. On Windows, right-click a schematic, pick "Open with" and choose
 `schemview.exe`. On macOS the binary isn't signed. Run
 `xattr -d com.apple.quarantine schemview` once before starting it.
 
+### Android
+
+Download `schemview-…-android-arm64.apk` from the releases page and open it on
+the phone (Android 8.0 or newer, 64-bit ARM). Android asks once whether your
+browser or file manager may install apps; allow it for that install.
+
+The phone version works like the desktop one, with touch controls:
+
+| Gesture | Does |
+|---|---|
+| One finger | orbit |
+| Two fingers | pinch to zoom, drag to pan |
+| Double-tap | reset the view |
+| Layer bar | drag the handles, as on the desktop; double-tap it to show all layers |
+| Back | close the help, then leave the app |
+
+Open files with the Open button, or from a file manager or chat app with "Open
+with" or "Share". In FX File Explorer, pick "Open as" → `application/*` the
+first time. A phone has no Minecraft install, so the app offers to download the
+current client jar from Mojang's servers (about 30 MB, checked against Mojang's
+SHA-1) or to use a `.jar` file you pick. It keeps one jar and reads only block
+models and textures from it. Nothing else goes over the network.
+
+On a Pixel 9a, Gaia's Vault (4.9 million blocks, 6.8 million triangles)
+loads in about 2 seconds and turns at about 40 fps.
+
+To build the APK yourself you need the Android SDK and NDK, `cargo-ndk` and the
+`aarch64-linux-android` Rust target. Then run `android/build.sh` (or
+`android/build.sh install` to install it on a phone connected with adb).
+
 ### From source
 
 You need a recent stable Rust toolchain.
@@ -151,6 +181,9 @@ Environment variables, mostly for testing and screenshots:
   model to copy. Chests, signs, beds and shulker boxes show as simple boxes
   with their texture. Banners, mob heads and conduits are plain coloured shapes.
 - Entities (item frames, armor stands, mobs) aren't shown.
+- The Android app needs a phone with OpenGL ES 3.0 (practically every 64-bit phone has it)
+  and keeps the whole build in graphics memory: about 1 GB for 7 million
+  triangles.
 - Animated textures show their first frame. Tints use Minecraft's default
   colours, not the biome's.
 

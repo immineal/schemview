@@ -1,0 +1,27 @@
+[package]
+name = "schemview-android"
+version = "1.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+# Kept out of the main crate's workspace: built only by ../build.sh.
+[workspace]
+
+[lib]
+name = "schemview_android"
+crate-type = ["cdylib"]
+
+[dependencies]
+schemview = { path = "../.." }
+winit = { version = "=0.30.13", default-features = false, features = ["android-native-activity"] }
+jni = "0.21"
+log = "0.4"
+android_logger = "0.15"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "unwind"

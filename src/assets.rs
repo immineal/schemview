@@ -105,6 +105,15 @@ pub fn find_jar() -> Option<PathBuf> {
         return p.is_file().then_some(p);
     }
     let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    // A folder of <version>.jar files (the Android app keeps its downloaded jar there).
+    if let Some(dir) = env("SCHEMVIEW_JAR_DIR") {
+        let rd = std::fs::read_dir(dir).ok()?;
+        return rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "jar") && p.is_file())
+            .max_by_key(|p| p.file_stem().and_then(|s| version_key(&s.to_string_lossy())).unwrap_or_default());
+    }
     let home = env("HOME").or_else(|| env("USERPROFILE"));
     // Vanilla launcher: <root>/versions/<v>/<v>.jar.
     let mut vanilla = vec![];
